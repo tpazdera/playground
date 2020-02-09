@@ -26,7 +26,7 @@ ln -s /var/www/html/NFS-wp-content/WP_CONTENT $WP_HOME/wp-content
 touch /var/www/html/index.html
 
 chown -R apache:apache /var/www/html/*
-chown -h apache:apache /var/www/html/about-us/wp-content
+chown -h apache:apache $WP_HOME/wp-content
 
 
 #
@@ -40,8 +40,8 @@ sed -i "s/'username_here'/'$DBUsername'/g"  $WP_HOME/wp-config.php
 sed -i "s/'password_here'/'$DBPassword'/g"  $WP_HOME/wp-config.php
 sed -i "s/'localhost'/'$DBEndpoint'/g"      $WP_HOME/wp-config.php
 
-sed -i -e "/^define( 'NONCE_SALT',       'put your unique phrase here' );/ a\\\ndefine('WP_SITEURL', 'https://' . $_SERVER['HTTP_HOST'] . '/about-us');\ndefine('WP_HOME', 'https://' . $_SERVER['HTTP_HOST'] . '/about-us');/" \
-       -e "/\/\*\* Sets up WordPress vars and included files. \*\// i\\/\/ Prevent redirection loop\n\/\/ See https:\/\/codex.wordpress.org\/Administration_Over_SSL#Using_a_Reverse_Proxy\ndefine('FORCE_SSL_ADMIN', true);\n\/\/if (strpos($_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)\n       $_SERVER['HTTPS']='on';\n" \
+sed -i -e "/^define( 'NONCE_SALT',       'put your unique phrase here' );/ a\\\ndefine('WP_SITEURL', 'https://' . \$_SERVER['HTTP_HOST'] . \'$REWRITE_BASE\');\ndefine('WP_HOME', 'https://' . \$_SERVER['HTTP_HOST'] . \'$REWRITE_BASE\');" \
+       -e "/\/\*\* Sets up WordPress vars and included files. \*\// i\\/\/ Prevent redirection loop\n\/\/ See https:\/\/codex.wordpress.org\/Administration_Over_SSL#Using_a_Reverse_Proxy\ndefine('FORCE_SSL_ADMIN', true);\n\/\/if (strpos(\$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)\n       \$_SERVER['HTTPS']='on';\n" \
 $WP_HOME/wp-config.php
 
 chown apache:apache $WP_HOME/wp-config.php
@@ -66,8 +66,9 @@ ServerTokens Prod
 ServerSignature Off
 
 # Hide X-Powered-By and Server headers, sent by downstream application servers:
-Header always unset \"X-Powered-By\"
-Header unset \"X-Powered-By\"
+# Note you need both below as the "always" one doesn't work with Jboss for some reason
+Header always unset "X-Powered-By"
+Header unset "X-Powered-By"
 APACHE_EOF
 
 

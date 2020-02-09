@@ -277,21 +277,11 @@ Resources:
             /tmp: 'http://wordpress.org/latest.tar.gz'
           files:
             /tmp/create-wp-config:
-              content: !Join 
-                - ''
-                - - DBName=
-                  - |
-                  - !Ref DBName
-                  - \nDBUsername=
-                  - |
-                  - !Ref DBUsername
-                  - \nDBPasswprd=
-                  - |
-                  - !Ref DBPassword
-                  - \nDBEndpoint=
-                  - !GetAtt 
-                    - WPMySQL
-                    - Endpoint.Address
+              content: !Sub |
+                DBName=${DBName}
+                DBUsername=${DBUsername}
+                DBPassword=${DBPassword}
+                DBEndpoint=${WPMySQL.Endpoint.Address}
               mode: '000500'
               owner: root
               group: root
@@ -364,7 +354,7 @@ Resources:
       Name: 'WordpressJediALB'
       Scheme: internal
       SecurityGroups:
-#        - !Ref WPSecurityGroupDB   # sec-{env}-wordpress-jedi-db
+        - !Ref WPSecurityGroupDB   # sec-{env}-wordpress-jedi-db
         - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupPrivate]
         - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupVpn]
       Subnets: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", Subnets]
