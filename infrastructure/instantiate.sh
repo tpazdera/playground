@@ -1,7 +1,7 @@
 #!/bin/bash
 
-WP_HOME = /var/www/html/about-us
-. create-wp-config
+WP_HOME=/var/www/html/about-us
+. /tmp/create-wp-config
 
 #
 #  Move Wordpress to Wordpress Home
@@ -19,7 +19,7 @@ ln -s /var/www/html/NFS-wp-content/WP_CONTENT $WP_HOME/wp-content
 touch /var/www/html/index.html
 
 chown -R apache:apache /var/www/html/*
-chown -h apache:apache /var/www/html/about-us/wp-content
+chown -h apache:apache /var/www/html/about-us/wp-content.php
 
 cd $WP_HOME ; /tmp/create-wp-config
 
@@ -48,10 +48,10 @@ sed -i -e 's/^ServerAdmin root@localhost$/ServerAdmin cbadmin@caringbridge.org/'
        -e 's/^#ServerName www.example.com:80$/ServerName localhost:80/' \
        -e '/<Directory "\/var\/www\/html">/,/<\/Directory>/ s/^    AllowOverride None$/    AllowOverride All/' \
        -e 's/^    DirectoryIndex index.html$/    DirectoryIndex index.html index.php/' \
-/etc/httpd.conf/httpd.conf
+/etc/httpd/conf/httpd.conf
 
 
-echo << 'APACHE_EOF' >> /etc/httpd/conf/httpd.conf
+echo <<'APACHE_EOF' >> /etc/httpd/conf/httpd.conf
 #Reduce Server HTTP Header to the minimum product (Apache) rather than showing detailed version information of the server and operating system
 ServerTokens Prod
 
