@@ -21,8 +21,6 @@ touch /var/www/html/index.html
 chown -R apache:apache /var/www/html/*
 chown -h apache:apache /var/www/html/about-us/wp-content.php
 
-cd $WP_HOME ; /tmp/create-wp-config
-
 
 #
 # wp-config configuration
@@ -31,9 +29,9 @@ cd $WP_HOME ; /tmp/create-wp-config
 cp $WP_HOME/wp-config-sample.php  $WP_HOME/wp-config.php
 
 sed -i "s/'database_name_here'/'$DBName'/g" $WP_HOME/wp-config.php
-sed -i "s/'username_here'/'DBUsername'/g"   $WP_HOME/wp-config.php
-sed -i "s/'password_here'/'DBPassword'/g"   $WP_HOME/wp-config.php
-sed -i "s/'localhost'/'DBEndpoint'/g"       $WP_HOME/wp-config.php
+sed -i "s/'username_here'/'$DBUsername'/g"  $WP_HOME/wp-config.php
+sed -i "s/'password_here'/'$DBPassword'/g"  $WP_HOME/wp-config.php
+sed -i "s/'localhost'/'$DBEndpoint'/g"      $WP_HOME/wp-config.php
 
 sed -i -e "/^define( 'NONCE_SALT',       'put your unique phrase here' );/ a\\\ndefine('WP_SITEURL', 'https://' . $_SERVER['HTTP_HOST'] . '/about-us');\ndefine('WP_HOME', 'https://' . $_SERVER['HTTP_HOST'] . '/about-us');/" \
        -e "/\/\*\* Sets up WordPress vars and included files. \*\// i\\/\/ Prevent redirection loop\n\/\/ See https:\/\/codex.wordpress.org\/Administration_Over_SSL#Using_a_Reverse_Proxy\ndefine('FORCE_SSL_ADMIN', true);\n\/\/if (strpos($_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)\n       $_SERVER['HTTPS']='on';\n" \
@@ -68,7 +66,7 @@ APACHE_EOF
 # Add .htaccess
 #
 
-echo <<HTACCESS_EOF > $WP_HOME/.htaccess
+echo <<'HTACCESS_EOF' > $WP_HOME/.htaccess
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /about-us

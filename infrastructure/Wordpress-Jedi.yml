@@ -1,0 +1,691 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Template to build a WordPress environment for Project Jedi.
+  It includes a MySql instance in RDS, an AutoScale group containing 2 instances
+  with a shared disk volume for the Wordpress theme.
+  
+  Additional Steps:
+  =================
+  - There should be an email sent to cbadmin@caringbridge.org for the SSL certificate.
+    You must click the link to accept the certificate from the email, otherwise the 
+    Cloudfront script will never have a status of CREATE_COMPLETE.
+    
+  - Go to a server created in the scaling group (http://10.10x.xx.xx)
+    Enter the parameters for the wordpress environment. Otherwise the servers will not
+    serve up any pages to customers.  Since the information is shared on the EFS volume, it
+    will work for all nodes in the cluster.
+    
+  - Update DNS for wpjedi.{environment}.caringbridge.org on the domain controller.
+    This will allow easy access to Wordpress from a user's desktop.
+    
+  - Update LogicMonitor with the correct information for the monitored objects
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Wordpress Web Server Configuration"
+        Parameters: 
+          - InstanceType
+          - InstanceMin
+      - 
+        Label: 
+          default: "Wordpress Database Configuration"
+        Parameters: 
+          - DBClass
+          - DBName
+          - DBUserName
+          - DBPassword
+          - DBAllocatedStorage
+          
+Parameters:
+  InstanceType:
+    Description: Wordpress EC2 instance type
+    Type: String
+    Default: m5a.large
+    AllowedValues:
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - t3.nano
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - m5.4xlarge
+      - m5.8xlarge
+      - m5a.large
+      - m5a.xlarge
+      - m5a.2xlarge
+      - m5a.4xlarge
+      - m5a.8xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+  InstanceMin:
+    Default: '2'
+    Description: The minimum number of Wordpress servers to start
+    Type: Number
+    MinValue: '1'
+    MaxValue: '5'
+    ConstraintDescription: must be between 1 and 5.
+  DBName:
+    Default: wordpress
+    Description: The database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUsername:
+    Default: cbadmin
+    NoEcho: 'false'
+    Description: The database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: The database admin account password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  DBClass:
+    Default: db.m5.large
+    Description: Database instance class
+    Type: String
+    AllowedValues:
+      - db.m3.medium
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+      - db.m4.4xlarge
+      - db.m4.10xlarge
+      - db.m5.large
+      - db.m5.xlarge
+      - db.m5.2xlarge
+      - db.m5.4xlarge
+      - db.m5.10xlarge
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+    ConstraintDescription: must select a valid database instance type.
+  DBAllocatedStorage:
+    Default: '20'
+    Description: The size of the database (Gb)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '1024'
+    ConstraintDescription: must be between 5 and 1024Gb.
+    
+Mappings:
+  AWSAccountMap:
+    "336059803576":
+      varEnvironment: "test"
+      varDBMultiAZ: false
+      VpcId:  vpc-bbf867c2
+      Subnets:  [ "subnet-ecd55bb6", "subnet-f3fe1997", "subnet-4b27b067", "subnet-0a13b6161ed22db1e" ]
+      SecGroupPublic:  sg-83afe8f2
+      SecGroupPrivate:  sg-aa9adddb
+      SecGroupVpn:  sg-5a91d62b
+      SecGroupLogicMonitor:  sg-048b690ec6adae31e
+    "599270107619":
+      varEnvironment: "staging"
+      varDBMultiAZ: false
+      VpcId:  vpc-ee00c397
+      Subnets: [ "subnet-9142c0d9", "subnet-9f76bac5", "subnet-25dfec40" ]
+      SecGroupPublic:  sg-f205268c
+      SecGroupPrivate:  sg-a20122dc
+      SecGroupVpn:  sg-c40221ba
+      SecGroupLogicMonitor:   sg-0a426f28ee26c7f35
+    "316345745209":
+      varEnvironment: "production"
+      varDBMultiAZ: true
+      VpcId:  vpc-60714a19
+      Subnets:  [ "subnet-267b8b19", "subnet-177a605f", "subnet-afb5ebf5" ]
+      SecGroupPublic:  sg-0ba8a87b
+      SecGroupPrivate:  sg-7aa5a50a
+      SecGroupVpn:  sg-90635be0
+      SecGroupLogicMonitor:  sg-0b4f782ac08c5a8c2
+
+Resources:
+  WPSecurityGroupEFS:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for web servers to Shared Disk (EFS)
+      GroupName: !Join
+      - '-'
+      - - sec
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+        - wordpress-jedi-efs
+      VpcId: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", VpcId]
+      Tags:
+        - Key: "Name"
+          Value: !Join
+          - '-'
+          - - sec
+            - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+            - wordpress-jedi-efs
+        - Key: "CostCenter"
+          Value: "Wordpress"
+
+  WPSecurityGroupEFSIngressEFS:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Wordpress Shared Storage (NFS)
+      GroupId: !Ref WPSecurityGroupEFS
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref WPSecurityGroupEFS
+      
+  WPSecurityGroupEFSIngressPublic:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Wordpress Shared Storage (NFS)
+      GroupId: !Ref WPSecurityGroupEFS
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId:  !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupPublic]
+
+  WPLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - 10_prep_machine
+            - 20_install_prereqs
+            - 30_install_wordpress
+            - 40_configure_wordpress
+            - 90_enable_snmp_for_logicmonitor
+            - 99_start_apache
+        10_prep_machine:
+          packages:
+            rpm: 
+              epel:  "http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm"
+              remi:  "http://rpms.remirepo.net/enterprise/remi-release-7.rpm"
+              mysql: "https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm"
+            yum:
+              amazon-efs-utils: []
+          commands:
+            yum_update:
+              command: "yum -y update"
+              ignoreErrors: 'false'
+            enable_remi:
+              command: "yum-config-manager --enable remi-php73"
+            enable_remi_priority:
+              command: "sed -i '/enabled=1/a priority=10' /etc/yum.repos.d/remi-php73.repo"
+            create_instance_tag:
+              command: "aws ec2 --region=us-east-1 create-tags \
+                --resources `wget -q -O - http://169.254.169.254/latest/meta-data/instance-id` \
+                --tags Key=Name,Value=wordpress-jedi-`ip -4 a show eth0 | grep inet | cut -d. -f3-4 | cut -d/ -f1`"
+              ignoreErrors: 'false'
+            enable_mysql:
+              command: "yum-config-manager --enable mysql.*-community.*"
+              ignoreErrors: 'false'
+        20_install_prereqs:
+          packages:
+            yum:
+              php: []
+              php-fpm: []
+              php-imap: []
+              php-gd: []
+              php-mbstring: []
+              php-mysqlnd: []
+              php-opcache: []
+              php-pdo: []
+              php-pecl-apcu: []
+              php-xml: []
+              mysql-community-client: []
+              httpd: []
+              mod_ssl: []
+              net-snmp: []
+              net-snmp-utils: []
+          commands:
+            www_group_ec2user:
+              command: "usermod -g apache ec2-user"
+              ignoreErrors: 'false'
+            mount_storage:
+              command: !Join
+                - ''
+                - - 'mkdir -p /var/www/html/NFS-wp-content ; echo "'
+                  - !Ref WPSharedDisk
+                  - ':/ /var/www/html/NFS-wp-content efs defaults,_netdev 0 0" >> /etc/fstab ; mount -a'
+              ignoreErrors: 'false'
+        30_install_wordpress:
+          sources:
+            /tmp: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - DBName=
+                  - |
+                  - !Ref DBName
+                  - DBUsername=
+                  - |
+                  - !Ref DBUsername
+                  - DBPasswprd=
+                  - |
+                  - !Ref DBPassword
+                  - DBEndpoint=
+                  - !GetAtt 
+                    - WPMySQL
+                    - Endpoint.Address
+              mode: '000500'
+              owner: root
+              group: root
+        40_configure_wordpress:
+          sources:
+            /tmp: 'https://raw.githubusercontent.com/tpazdera/playground/master/infrastructure/instantiate.tar.gz'
+          commands:
+            10_configure_wordpress:
+              command: /tmp/instantiate.sh
+              ignoreErrors: 'false'
+        90_enable_snmp_for_logicmonitor:
+          commands:
+            10_stop_snmp_service:
+              command: systemctl stop snmpd.service
+              ignoreErrors: 'false'
+            11_create_snmpV3_user:
+              command: net-snmp-create-v3-user -ro -A '1Kiia*ynqdP?' -X 'kd-RKw^%Ge~0' -a SHA -x AES snmpV3user
+              ignoreErrors: 'false'
+            12_minimize_logging:
+              command: echo 'OPTIONS="-LS0-4d"' | sudo tee -a /etc/sysconfig/snmpd
+              ignoreErrors: 'false'
+            13_start_snmp_service:
+              command: systemctl start snmpd.service
+              ignoreErrors: 'false'
+            14_enable_snmp_service:
+              command: systemctl enable snmpd.service
+              ignoreErrors: 'false'
+        99_start_apache:
+          commands:
+            90_start_apache:
+              # Cant use the services section, since it only supports System V
+              command: /usr/bin/systemctl start httpd
+              ignoreErrors: 'false'
+            91_enable_apache:
+              command: chkconfig httpd on
+              ignoreErrors: 'false'
+    Properties:
+      AssociatePublicIpAddress: false
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: 10
+            VolumeType: gp2
+      EbsOptimized: false
+      ImageId: ami-0b898040803850657  # Amazon Linux 2
+      InstanceMonitoring: false
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref RootInstanceProfile
+      KeyName: !Join
+        - '-'
+        - - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+          - us-east-1
+      SecurityGroups:
+        - !Ref WPSecurityGroupDB   # sec-{env}-wordpress-jedi-db
+        - !Ref WPSecurityGroupEFS  # sec-{env}-wordpress-jedi-efs
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupLogicMonitor]
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupPrivate]
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupVpn]
+      UserData:
+        'Fn::Base64': !Sub |
+           #!/bin/bash -x
+           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WPLaunchConfig --configsets wordpress_install --region ${AWS::Region}
+           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WPAutoScalingGroup --region ${AWS::Region}
+
+  WPLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      IpAddressType: ipv4
+      Name: 'WordpressJediALB'
+      Scheme: internal
+      SecurityGroups:
+#        - !Ref WPSecurityGroupDB   # sec-{env}-wordpress-jedi-db
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupPrivate]
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", SecGroupVpn]
+      Subnets: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", Subnets]
+      Tags:
+        - Key: "CostCenter"
+          Value: "Wordpress"
+        - Key: "Name"
+          Value: "WordpressJediALB"
+      Type: application
+
+  WPDNSRecordSetGroup:
+    Type: "AWS::Route53::RecordSetGroup"
+    Properties:
+      HostedZoneName: !Join
+      - '.'
+      - - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+        - caringbridge.org.
+      Comment: 'Create alias to map caringbridge.org domain name to the WordpressJediALB'
+      RecordSets:
+      - Name: !Join
+        - '.'
+        - - wpjedi
+          - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+          - caringbridge.org
+        Type: A
+        AliasTarget:
+            DNSName: !GetAtt WPLoadBalancer.DNSName
+            EvaluateTargetHealth: false
+            HostedZoneId: !GetAtt WPLoadBalancer.CanonicalHostedZoneID
+
+  WPSSLCert443:
+    Type: "AWS::CertificateManager::Certificate"
+    Properties: 
+      DomainName: !Join
+        - '.'
+        - - wpjedi
+          - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+          - caringbridge.org
+      DomainValidationOptions: 
+        - DomainName: caringbridge.org
+          ValidationDomain: caringbridge.org
+      SubjectAlternativeNames:
+        - caringbridge.org
+      Tags: 
+        - Key: "Name"
+          Value: "Wordpress Jedi SSL Cert"
+        - Key: "CostCenter"
+          Value: "Wordpress"
+      ValidationMethod: EMAIL
+
+  WPLBListener80:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      LoadBalancerArn: !Ref WPLoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WPTargetGroup
+      
+  WPLBListener443:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      Certificates:
+        - CertificateArn: !Ref WPSSLCert443
+      LoadBalancerArn: !Ref WPLoadBalancer
+      Port: 443
+      Protocol: "HTTPS"
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref WPTargetGroup
+      
+  WPTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: WPLoadBalancer
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200"
+      Name: 'WordpressJediTargetGroup'
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", VpcId]
+      Tags:
+        - Key: "CostCenter"
+          Value: "Wordpress"
+        - Key: "Name"
+          Value: "WordpressJediTargetGroup"
+
+  WPAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: 'WordpressJediAutoScaling'
+      LaunchConfigurationName: !Ref WPLaunchConfig
+      TargetGroupARNs: 
+        - !Ref WPTargetGroup
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: !Ref InstanceMin
+      VPCZoneIdentifier: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", Subnets]
+      Tags:
+        - Key: "CostCenter"
+          PropagateAtLaunch: true
+          Value: "Wordpress"
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: '1'
+        PauseTime: PT15M
+        WaitOnResourceSignals: 'true'
+
+  WPAutoScalingUp:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: "ChangeInCapacity"
+      AutoScalingGroupName: !Ref WPAutoScalingGroup
+      Cooldown: "60"
+      ScalingAdjustment: "1"
+      
+  WPAutoScalingDown:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: "ChangeInCapacity"
+      AutoScalingGroupName: !Ref WPAutoScalingGroup
+      Cooldown: "60"
+      ScalingAdjustment: "-1"
+
+  WPSharedDisk:
+    Type: AWS::EFS::FileSystem
+    Properties: 
+      Encrypted: false
+      FileSystemTags:
+        - Key: "Name"
+          Value: "wordpress-jedi"
+        - Key: "CostCenter"
+          Value: "Wordpress"
+      PerformanceMode: generalPurpose
+      
+  WPSharedDiskMountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref WPSharedDisk
+      SecurityGroups: 
+        - !Ref WPSecurityGroupEFS      # sec-{env}-wordpress-jedi-efs
+      SubnetId: !Select
+        - 0
+        - !FindInMap
+          - AWSAccountMap
+          - !Ref "AWS::AccountId"
+          - Subnets
+      
+  WPSharedDiskMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref WPSharedDisk
+      SecurityGroups: 
+        - !Ref WPSecurityGroupEFS      # sec-{env}-wordpress-jedi-efs
+      SubnetId: !Select
+        - 1
+        - !FindInMap
+          - AWSAccountMap
+          - !Ref "AWS::AccountId"
+          - Subnets
+      
+  WPSharedDiskMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref WPSharedDisk
+      SecurityGroups: 
+        - !Ref WPSecurityGroupEFS      # sec-{env}-wordpress-jedi-efs
+      SubnetId: !Select
+       - 2
+       - !FindInMap
+         - AWSAccountMap
+         - !Ref "AWS::AccountId"
+         - Subnets
+        
+  WPRootRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Tags:
+        - Key: "CostCenter"
+          Value: "Wordpress" 
+      
+  RolePolicies:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: WordpressRootPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+      Roles:
+        - !Ref WPRootRole
+        
+  RootInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref WPRootRole
+
+  ############################
+  # MySQL RDS Database
+  ############################
+  WPMySQLSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: Subnets available for the RDS DB Instance
+      SubnetIds: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", Subnets]
+      
+  WPSecurityGroupDB:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security group for RDS DB Instance.
+      GroupName: !Join
+      - '-'
+      - - sec
+        - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+        - wordpress-jedi-db
+      VpcId: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", VpcId]
+      Tags:
+        - Key: "Name"
+          Value: !Join
+          - '-'
+          - - sec
+            - !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varEnvironment]
+            - wordpress-jedi-db
+        - Key: "CostCenter"
+          Value: "Wordpress"
+
+  WPSecurityGroupDBIngressDB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: MySQL Database
+      GroupId: !Ref WPSecurityGroupDB
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref WPSecurityGroupEFS
+      
+  WPSecurityGroupDBIngressVPN:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: CB Office VPN
+      GroupId: !Ref WPSecurityGroupDB
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: "10.0.250.0/24"
+      
+  WPSecurityGroupDBIngressOffice:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: CB Office
+      GroupId: !Ref WPSecurityGroupDB
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: "10.10.0.0/16"
+      
+  WPMySQL:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBName: !Ref DBName
+      AllocatedStorage: !Ref DBAllocatedStorage
+      DBInstanceClass: !Ref DBClass
+      DBSubnetGroupName: !Ref WPMySQLSubnetGroup
+      EnableIAMDatabaseAuthentication: true
+      Engine: MySQL
+      EngineVersion: '8.0.16'
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      MultiAZ: !FindInMap [AWSAccountMap, !Ref "AWS::AccountId", varDBMultiAZ]
+      StorageType: 'gp2'
+      VPCSecurityGroups:
+        - !Ref WPSecurityGroupDB
+      Tags:
+        - Key: "Name"
+          Value: "Wordpress-Jedi"
+        - Key: "CostCenter"
+          Value: "Wordpress"
+          
+Outputs:
+  JDBCConnectionString:
+    Description: JDBC connection string for database
+    Value: !Join 
+      - ''
+      - - 'jdbc:mysql://'
+        - !GetAtt 
+          - WPMySQL
+          - Endpoint.Address
+        - ':'
+        - !GetAtt 
+          - WPMySQL
+          - Endpoint.Port
+        - /
+        - !Ref DBName
+  WebsiteURL:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - WPLoadBalancer
+          - DNSName
+    Description: WordPress Website
