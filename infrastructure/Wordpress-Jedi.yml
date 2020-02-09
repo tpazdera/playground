@@ -282,13 +282,13 @@ Resources:
                 - - DBName=
                   - |
                   - !Ref DBName
-                  - DBUsername=
+                  - \nDBUsername=
                   - |
                   - !Ref DBUsername
-                  - DBPasswprd=
+                  - \nDBPasswprd=
                   - |
                   - !Ref DBPassword
-                  - DBEndpoint=
+                  - \nDBEndpoint=
                   - !GetAtt 
                     - WPMySQL
                     - Endpoint.Address

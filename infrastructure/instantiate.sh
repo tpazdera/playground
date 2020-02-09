@@ -1,25 +1,32 @@
 #!/bin/bash
 
 WP_HOME=/var/www/html/about-us
+REWRITE_BASE=/about-us
+
 . /tmp/create-wp-config
 
 #
 #  Move Wordpress to Wordpress Home
 #
 
+if [ ! -d $WP_HOME ]
+then 
+  mkdir $WP_HOME
+fi
+
 mv /tmp/wordpress/* $WP_HOME
 mv $WP_HOME/wp-content $WP_HOME/wp-contentORIG
 
-if [ ! -d $WP_HOME/NFS-wp-content/WP_CONTENT ]
-then 
-  cp -nr $WP_HOME/wp-contentORIG $WP_HOME/NFS-wp-content/WP_CONTENT
+if [ ! -d /var/www/html/NFS-wp-content/WP_CONTENT ]
+then
+  cp -nr $WP_HOME/wp-contentORIG /var/www/html/NFS-wp-content/WP_CONTENT
 fi
 
 ln -s /var/www/html/NFS-wp-content/WP_CONTENT $WP_HOME/wp-content
 touch /var/www/html/index.html
 
 chown -R apache:apache /var/www/html/*
-chown -h apache:apache /var/www/html/about-us/wp-content.php
+chown -h apache:apache /var/www/html/about-us/wp-content
 
 
 #
@@ -37,6 +44,7 @@ sed -i -e "/^define( 'NONCE_SALT',       'put your unique phrase here' );/ a\\\n
        -e "/\/\*\* Sets up WordPress vars and included files. \*\// i\\/\/ Prevent redirection loop\n\/\/ See https:\/\/codex.wordpress.org\/Administration_Over_SSL#Using_a_Reverse_Proxy\ndefine('FORCE_SSL_ADMIN', true);\n\/\/if (strpos($_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false)\n       $_SERVER['HTTPS']='on';\n" \
 $WP_HOME/wp-config.php
 
+chown apache:apache $WP_HOME/wp-config.php
 
 #
 # Configure Apache httpd.conf
@@ -49,11 +57,12 @@ sed -i -e 's/^ServerAdmin root@localhost$/ServerAdmin cbadmin@caringbridge.org/'
 /etc/httpd/conf/httpd.conf
 
 
-echo <<'APACHE_EOF' >> /etc/httpd/conf/httpd.conf
-#Reduce Server HTTP Header to the minimum product (Apache) rather than showing detailed version information of the server and operating system
+cat <<APACHE_EOF >> /etc/httpd/conf/httpd.conf
+
+# Reduce Server HTTP Header to the minimum product (Apache) rather than showing detailed version information of the server and operating system
 ServerTokens Prod
 
-#Remove the footer from error pages, which details the version numbers:
+# Remove the footer from error pages, which details the version numbers:
 ServerSignature Off
 
 # Hide X-Powered-By and Server headers, sent by downstream application servers:
@@ -66,10 +75,10 @@ APACHE_EOF
 # Add .htaccess
 #
 
-echo <<'HTACCESS_EOF' > $WP_HOME/.htaccess
+cat <<'HTACCESS_EOF' > $WP_HOME/.htaccess
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteBase /about-us
+    RewriteBase xxREWRITE_BASExx
     RewriteCond %{HTTPS} =on
     RewriteRule .* - [E=W3TC_SSL:_ssl]
     RewriteCond %{SERVER_PORT} =443
@@ -96,12 +105,14 @@ echo <<'HTACCESS_EOF' > $WP_HOME/.htaccess
 # Any changes to the directives between these markers will be overwritten.
 <IfModule mod_rewrite.c>
 RewriteEngine On
-RewriteBase /about-us/
+RewriteBase xxREWRITE_BASExx/
 RewriteRule ^index\.php$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /about-us/index.php [L]
+RewriteRule . xxREWRITE_BASExx/index.php [L]
 </IfModule>
 
 # END WordPress
 HTACCESS_EOF
+
+sed -i "s#xxREWRITE_BASExx#$REWRITE_BASE#g" $WP_HOME/.htaccess
