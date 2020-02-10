@@ -423,6 +423,7 @@ Resources:
       LoadBalancerArn: !Ref WPLoadBalancer
       Port: 443
       Protocol: "HTTPS"
+      SslPolicy: ELBSecurityPolicy-2016-08
       DefaultActions:
       - Type: forward
         TargetGroupArn: !Ref WPTargetGroup

@@ -33,7 +33,7 @@ chown -h apache:apache $WP_HOME/wp-content
 # wp-config configuration
 #
 
-cp $WP_HOME/wp-config-sample.php  $WP_HOME/wp-config.php
+tr -d '\015' <$WP_HOME/wp-config-sample.php >$WP_HOME/wp-config.php
 
 sed -i "s/'database_name_here'/'$DBName'/g" $WP_HOME/wp-config.php
 sed -i "s/'username_here'/'$DBUsername'/g"  $WP_HOME/wp-config.php
